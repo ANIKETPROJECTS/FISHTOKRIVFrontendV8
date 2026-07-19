@@ -71,13 +71,39 @@ Note: this project previously had live credentials committed in plaintext inside
 - **Build**: `npm run build` — builds the frontend to `dist/public`
 - **Production**: `npm start` — serves the built frontend + API
 
-## Setup Notes (Replit import)
+## Replit Setup (last verified 2026-07-19)
 
-- Dependencies installed via `npm install`; `dev` script requires `node_modules/.bin/tsx`, so always run `npm install` after a fresh clone/import before starting the workflow.
-- Secrets configured: `MONGODB_URI`, `SESSION_SECRET`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `ADMARK_API_KEY`, `ADMARK_PHONE_NUMBER_ID`.
-- On boot the server connects to `customers`, `fishtokri_admin`, `orders`, and per-hub DBs (confirmed working against the configured `MONGODB_URI`). The 401s on `/api/auth/me` during initial page load are expected (no session yet), not an error.
-- Re-imported and re-verified working (2026-07-10): `npm install` + secrets re-added restored a clean boot; storefront renders correctly with the pincode gate.
-- Re-imported and re-verified working again (2026-07-12): `npm install` + all secrets re-added (including `VITE_GOOGLE_MAPS_API_KEY` this time, as proper Secrets, not `.replit`). Server connects to customers/orders/fishtokri_admin/hub DBs and serves the storefront pincode gate correctly.
+### 1. Install dependencies
+```
+npm install
+```
+The `dev` script uses `tsx` from `node_modules/.bin/tsx` — always run `npm install` after a fresh import or clone before starting the workflow.
+
+### 2. Configure environment variables
+All required values are documented in `.env.example`. On Replit, set them as **Secrets / env vars** (never commit plaintext credentials):
+
+| Variable | Where to set | Notes |
+|---|---|---|
+| `MONGODB_URI` | Replit Secret | Full connection string incl. credentials |
+| `SESSION_SECRET` | Replit Secret | Long random string |
+| `RAZORPAY_KEY_ID` | Replit Secret | Live key from Razorpay dashboard |
+| `RAZORPAY_KEY_SECRET` | Replit Secret | Secret from Razorpay dashboard |
+| `VITE_RAZORPAY_KEY_ID` | Replit env var | Same value as `RAZORPAY_KEY_ID`; baked into client bundle |
+| `VITE_GOOGLE_MAPS_API_KEY` | Replit env var | Domain-restricted; baked into client bundle |
+| `ADMARK_API_KEY` | Replit Secret | WhatsApp notifications (optional) |
+| `ADMARK_PHONE_NUMBER_ID` | Replit env var | Admark sender phone number ID |
+
+### 3. Start the app
+Run the **Start application** workflow (or `npm run dev`). On a healthy boot you should see:
+```
+Connected to fishtokri_admin DB
+Connected to orders DB
+Connected to customers DB
+Connected to hub DB: <hub-name>
+5:xx:xx AM [express] serving on port 5000
+```
+
+The 401s logged by the browser on `/api/auth/me` for unauthenticated users are expected and not an error — the client checks session state on every load.
 
 ## Key Features
 
