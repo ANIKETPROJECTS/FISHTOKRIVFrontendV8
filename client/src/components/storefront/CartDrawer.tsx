@@ -777,10 +777,15 @@ export function CartDrawer() {
         return;
       }
 
+      // Build the pre-payment payload now (before the modal) so the server can store
+      // it as a pending checkout. The webhook uses this to reconstruct the order if
+      // the browser closes before the client-side handler fires.
+      const pendingOrderPayload = buildOrderPayload(selected);
+
       const res = await fetch("/api/razorpay/create-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: finalTotal }),
+        body: JSON.stringify({ amount: finalTotal, orderPayload: pendingOrderPayload }),
       });
       if (!res.ok) {
         toast({ title: "Could not initiate payment. Please try again.", variant: "destructive" });
@@ -831,7 +836,7 @@ export function CartDrawer() {
               setIsProcessingPayment(false);
               return;
             }
-            createOrder(buildOrderPayload(selected, response.razorpay_payment_id), {
+            createOrder({ ...buildOrderPayload(selected, response.razorpay_payment_id), razorpayOrderId: order_id }, {
               onSuccess: () => {
                 // Force the drawer open so the success screen is visible
                 setIsCartOpen(true);
@@ -945,7 +950,7 @@ export function CartDrawer() {
         paymentSucceededRef.current = true;
         pendingRzpOrderIdRef.current = null;
 
-        createOrder(buildOrderPayload(selected, statusData.paymentId), {
+        createOrder({ ...buildOrderPayload(selected, statusData.paymentId), razorpayOrderId: orderId }, {
           onSuccess: () => {
             setIsCartOpen(true);
             setIsSuccess(true);

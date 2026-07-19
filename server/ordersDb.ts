@@ -70,6 +70,7 @@ const orderSchema = new mongoose.Schema(
     timeslotEnd: { type: String, default: null },
     inventoryDeducted: { type: Boolean, default: false },
     upiTransactionId: { type: String, default: null },
+    razorpayOrderId: { type: String, default: null },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
     orderId: { type: String },
@@ -92,6 +93,29 @@ export function getOrderModel() {
     throw new Error("Orders DB not connected. Call connectOrdersDb() first.");
   }
   return ordersConnection.models["Order"] || ordersConnection.model("Order", orderSchema);
+}
+
+// ── Pending Checkout (webhook recovery store) ─────────────────────────────────
+// Stores the full order payload immediately when a Razorpay order is created
+// (before the modal opens). The webhook uses this to reconstruct the FishTokri
+// order if the browser closes before the client-side handler fires.
+// TTL: 24 hours (Razorpay retries webhooks for up to 24 hours).
+
+const pendingCheckoutSchema = new mongoose.Schema(
+  {
+    razorpayOrderId: { type: String, required: true, unique: true, index: true },
+    orderPayload: { type: mongoose.Schema.Types.Mixed, required: true },
+    createdAt: { type: Date, default: Date.now, expires: 86400 }, // 24h TTL
+  },
+  { versionKey: false }
+);
+
+export function getPendingCheckoutModel() {
+  if (!ordersConnection) {
+    throw new Error("Orders DB not connected. Call connectOrdersDb() first.");
+  }
+  return ordersConnection.models["PendingCheckout"] ||
+    ordersConnection.model("PendingCheckout", pendingCheckoutSchema);
 }
 
 /**

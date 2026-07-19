@@ -5,7 +5,7 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import passport from "passport";
 import { setupAuth } from "./auth";
-import { connectOrdersDb, generateOrderId, getOrderModel } from "./ordersDb";
+import { connectOrdersDb, generateOrderId, getOrderModel, getPendingCheckoutModel } from "./ordersDb";
 import { setImage, getImage, deleteImage } from "./imageStore";
 import { insertCarouselSlideSchema, insertCategorySchema, insertSectionSchema, insertComboSchema, insertCustomerAddressSchema, updateCustomerSchema, insertInventoryBatchSchema } from "@shared/schema";
 import { SuperHubModel, SubHubModel, OtpModel } from "./adminDb";
@@ -488,7 +488,7 @@ export async function registerRoutes(
   app.post("/api/razorpay/create-order", async (req, res) => {
     if (!razorpay) return res.status(503).json({ message: "Payment service not configured" });
     try {
-      const { amount } = req.body;
+      const { amount, orderPayload } = req.body;
       if (!amount || typeof amount !== "number" || amount <= 0) {
         return res.status(400).json({ message: "Invalid amount" });
       }
@@ -497,11 +497,140 @@ export async function registerRoutes(
         currency: "INR",
         receipt: `ft_${Date.now()}`,
       });
+
+      // Store the full order payload so the webhook can reconstruct the order if
+      // the browser closes before the client-side handler fires.
+      if (orderPayload && typeof orderPayload === "object") {
+        try {
+          const PendingCheckout = getPendingCheckoutModel();
+          await PendingCheckout.findOneAndUpdate(
+            { razorpayOrderId: order.id },
+            { razorpayOrderId: order.id, orderPayload },
+            { upsert: true, new: true }
+          );
+        } catch (storeErr) {
+          // Non-fatal — webhook fallback just won't have the payload
+          console.error("[Razorpay] Failed to store pending checkout:", storeErr);
+        }
+      }
+
       return res.json({ order_id: order.id, amount: order.amount, currency: order.currency });
     } catch (err: any) {
       console.error("[Razorpay] create-order error:", err);
       return res.status(500).json({ message: "Failed to create payment order" });
     }
+  });
+
+  // ── Razorpay webhook ──────────────────────────────────────────────────────────
+  // Safety net: if the browser closes after Razorpay captures the payment but
+  // before the client-side handler can call /api/orders, this webhook creates
+  // the FishTokri order server-side so no paid order is ever lost.
+  //
+  // Setup: Razorpay Dashboard → Settings → Webhooks → add your domain's
+  //   POST /api/webhooks/razorpay URL, select "payment.captured", and copy
+  //   the generated secret into the RAZORPAY_WEBHOOK_SECRET env var.
+  app.post("/api/webhooks/razorpay", async (req, res) => {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error("[Razorpay webhook] RAZORPAY_WEBHOOK_SECRET not configured — webhook disabled");
+      return res.status(500).json({ message: "Webhook not configured" });
+    }
+
+    // Verify HMAC-SHA256 signature using the raw body captured by express.json verify()
+    const rawBody = (req as any).rawBody as Buffer | undefined;
+    const signature = req.headers["x-razorpay-signature"] as string | undefined;
+    if (!rawBody || !signature) {
+      return res.status(400).json({ message: "Missing body or signature" });
+    }
+    const expectedSig = createHmac("sha256", webhookSecret)
+      .update(rawBody)
+      .digest("hex");
+    if (expectedSig !== signature) {
+      console.warn("[Razorpay webhook] Signature mismatch — possible spoofed request");
+      return res.status(400).json({ message: "Invalid signature" });
+    }
+
+    const event = req.body;
+    // Only handle payment.captured; acknowledge all other events immediately
+    if (event.event !== "payment.captured") {
+      return res.status(200).json({ message: "Event ignored" });
+    }
+
+    const payment = event.payload?.payment?.entity;
+    if (!payment?.id || !payment?.order_id) {
+      return res.status(400).json({ message: "Invalid payment payload" });
+    }
+
+    const razorpayPaymentId: string = payment.id;
+    const razorpayOrderId: string = payment.order_id;
+    const amountPaid: number = (payment.amount ?? 0) / 100; // Razorpay sends paise
+
+    console.log(`[Razorpay webhook] payment.captured: payment_id=${razorpayPaymentId} order_id=${razorpayOrderId} amount=₹${amountPaid}`);
+
+    try {
+      // Idempotency: skip if a FishTokri order already exists for this payment
+      const OrderModel = getOrderModel();
+      const existing = await OrderModel.findOne({
+        $or: [
+          { razorpayOrderId },
+          { "payments.reference": razorpayPaymentId },
+          { upiTransactionId: razorpayPaymentId },
+        ],
+      }).lean();
+      if (existing) {
+        console.log(`[Razorpay webhook] Order already exists for payment ${razorpayPaymentId} — skipping`);
+        return res.status(200).json({ message: "Already processed" });
+      }
+
+      // Fetch the pending checkout payload saved at create-order time
+      const PendingCheckout = getPendingCheckoutModel();
+      const pending = await PendingCheckout.findOne({ razorpayOrderId }).lean() as any;
+      if (!pending?.orderPayload) {
+        console.warn(`[Razorpay webhook] No pending checkout found for Razorpay order ${razorpayOrderId} — cannot reconstruct order`);
+        return res.status(200).json({ message: "No pending checkout" });
+      }
+
+      // Build the complete order payload: merge stored payload with actual payment details
+      const walletPayments = (pending.orderPayload.payments ?? []).filter((p: any) => p.mode === "wallet");
+      const paidAt = new Date().toISOString();
+      const orderPayload = {
+        ...pending.orderPayload,
+        razorpayOrderId,
+        payments: [
+          ...walletPayments,
+          { mode: "upi", amount: amountPaid, reference: razorpayPaymentId, paidAt },
+        ],
+        paymentStatus: "paid",
+        paidAmount: amountPaid,
+        dueAmount: 0,
+        paymentMode: "upi",
+      };
+
+      // Create the order via the existing /api/orders route (reuses all validation,
+      // inventory deduction, coupon tracking, and WhatsApp notification logic).
+      const port = process.env.PORT || "5000";
+      const createRes = await fetch(`http://localhost:${port}/api/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(orderPayload),
+      });
+
+      if (createRes.ok) {
+        const created = await createRes.json() as any;
+        console.log(`[Razorpay webhook] Order created: orderId=${created.orderId ?? created.id} for payment ${razorpayPaymentId}`);
+        // Clean up the pending checkout
+        await PendingCheckout.deleteOne({ razorpayOrderId });
+      } else {
+        const errText = await createRes.text();
+        console.error(`[Razorpay webhook] Order creation failed (${createRes.status}): ${errText}`);
+      }
+    } catch (err) {
+      console.error("[Razorpay webhook] Unexpected error:", err);
+    }
+
+    // Always return 200 — non-200 causes Razorpay to retry, which is only correct
+    // for transient infra errors (handled above with logging instead).
+    return res.status(200).json({ message: "OK" });
   });
 
   // Mobile UPI return: check if a Razorpay order has been paid (verifies server-side)
