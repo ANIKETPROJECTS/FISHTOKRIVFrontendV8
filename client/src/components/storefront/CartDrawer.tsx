@@ -718,8 +718,7 @@ export function CartDrawer() {
       couponCode: appliedCoupon?.code ?? null,
       discountAmount: discountAmount > 0 ? discountAmount : null,
       paymentMode: finalTotal === 0 ? "wallet" : paymentMethod === "online" ? "upi" : "cash",
-      subHubId: selectedSubHub?.id ?? null,
-      subHubName: selectedSubHub?.name ?? null,
+      hubDbName: selectedSubHub?.dbName ?? null,
     } as any;
   };
 
