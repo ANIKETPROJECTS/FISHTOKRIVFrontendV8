@@ -3,9 +3,9 @@ name: Expired batch handling
 description: toProduct mapper auto-marks products "unavailable" when all inventory batches are expired.
 ---
 
-In `server/routes.ts` `toProduct()`:
-- Filters `inventoryBatches` where `remainingTime !== "expired"` 
-- If product had batches AND all are now expired → `effectiveStatus = "unavailable"` (overrides DB status)
+- Filters `inventoryBatches` where `remainingTime !== "expired"` and `expiryDate` is later than the current time.
+- If product had batches AND all are now expired → `effectiveStatus = "unavailable"` (overrides DB status) and `batchExpired = true`.
+- Batch-based checkout must apply the same current-time filter before stock totals and FIFO deduction; the hourly database sync is not a checkout guard.
 
 In `client/src/pages/storefront/Home.tsx` combo sections:
 - Filter combos where any included product has `status === "unavailable"` — those combos are hidden.
