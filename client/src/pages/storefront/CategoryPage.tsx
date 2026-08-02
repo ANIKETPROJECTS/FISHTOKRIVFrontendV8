@@ -46,8 +46,8 @@ export default function CategoryPage() {
   const activeSub = subFilter ? decodeURIComponent(subFilter) : "All";
 
   const categoryProducts = isAll
-    ? (products?.filter((p) => !p.isArchived) || [])
-    : (products?.filter((p) => !p.isArchived && p.category === categoryName) || []);
+    ? (products?.filter((p) => !p.isArchived && !p.batchExpired) || [])
+    : (products?.filter((p) => !p.isArchived && !p.batchExpired && p.category === categoryName) || []);
 
   const currentCategory = categories.find((c) => c.name === categoryName);
   const subCategories = currentCategory?.subCategories ?? [];

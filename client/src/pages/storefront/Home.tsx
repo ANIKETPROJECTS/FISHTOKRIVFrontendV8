@@ -102,7 +102,7 @@ export default function Home() {
   };
 
   const filteredProducts = products?.filter((p) => {
-    if (p.isArchived) return false;
+    if (p.isArchived || p.batchExpired) return false;
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          p.category.toLowerCase().includes(searchQuery.toLowerCase());
     if (activeCategory === "All") return matchesSearch;
@@ -118,14 +118,14 @@ export default function Home() {
       ).filter(combo =>
         combo.includes.every(inc => {
           const p = productMap[inc.productId];
-          return !p || p.status !== "unavailable";
+          return !p || (!p.batchExpired && p.status !== "unavailable");
         })
       )
     : [];
 
   const getSectionProducts = (sectionId: string, unlimited = false) => {
     const filtered = products?.filter(p => {
-      if (p.isArchived) return false;
+      if (p.isArchived || p.batchExpired) return false;
       if (Array.isArray(p.sectionId)) return p.sectionId.includes(sectionId);
       return p.sectionId === sectionId;
     }) || [];
@@ -340,7 +340,7 @@ export default function Home() {
             const availableCombos = combos.filter(combo =>
               combo.includes.every(inc => {
                 const p = productMap[inc.productId];
-                return !p || p.status !== "unavailable";
+                return !p || (!p.batchExpired && p.status !== "unavailable");
               })
             );
             return (

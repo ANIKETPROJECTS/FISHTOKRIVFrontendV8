@@ -66,6 +66,8 @@ export type Product = {
   discountPct: number | null;
   quantity: number | null;
   availableQty: number | null;
+  /** True when the product has inventory batches and every batch has expired. */
+  batchExpired: boolean;
   couponIds: string[];
   recipes: Recipe[];
 };

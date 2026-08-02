@@ -161,7 +161,7 @@ export default function CombosPage() {
   const availableCombos = combos.filter(combo =>
     combo.includes.every(inc => {
       const p = productMap[inc.productId];
-      return !p || p.status !== "unavailable";
+      return !p || (!p.batchExpired && p.status !== "unavailable");
     })
   );
 

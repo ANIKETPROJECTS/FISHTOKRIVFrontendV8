@@ -53,8 +53,8 @@ export function CategoryMenuDropdown({ open, onClose }: Props) {
   const activeCategoryName = activeCategory ?? "All";
 
   const activeProducts = activeCategoryName === "All"
-    ? allProducts.filter((p) => !p.isArchived)
-    : allProducts.filter((p) => !p.isArchived && p.category === activeCategoryName);
+    ? allProducts.filter((p) => !p.isArchived && !p.batchExpired)
+    : allProducts.filter((p) => !p.isArchived && !p.batchExpired && p.category === activeCategoryName);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {

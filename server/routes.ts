@@ -237,6 +237,7 @@ export async function registerRoutes(
     const effectiveStatus = allBatches.length > 0 && activeBatches.length === 0
       ? "unavailable"
       : doc.status;
+    const batchExpired = allBatches.length > 0 && activeBatches.length === 0;
     // Total available quantity — from non-expired batches if they exist, else fall back to doc.quantity
     const availableQty = allBatches.length > 0
       ? activeBatches.reduce((sum: number, b: any) => sum + (b.quantity ?? 0), 0)
@@ -252,7 +253,7 @@ export async function registerRoutes(
       grossWeight: doc.grossWeight ?? null, netWeight: doc.netWeight ?? null,
       pieces: doc.pieces ?? null, serves: doc.serves ?? null,
       discountPct: doc.discountPct ?? null, quantity: doc.quantity ?? null,
-      availableQty,
+      availableQty, batchExpired,
       couponIds: (doc.couponIds ?? []).map((id: any) => id.toString()),
       recipes: (doc.recipes ?? []).map((r: any) => ({
         title: r.title ?? "", description: r.description ?? "",
@@ -766,10 +767,17 @@ export async function registerRoutes(
           }
 
           // ── Batch-based path (FIFO) ────────────────────────────────────────────
+          const now = new Date();
+          const activeBatches = (product.inventoryBatches as any[]).filter((batch: any) => {
+            const expiryDate = batch.expiryDate
+              ? new Date(batch.expiryDate)
+              : computeExpiryDate(new Date(batch.entryDate), batch.shelfLifeDays);
+            return batch.remainingTime !== "expired" && expiryDate > now;
+          });
 
           // Pre-flight stock check against current DB state (non-blocking optimisation;
           // the real guard is the atomic $gte on each batch below)
-          const totalAvailable = (product.inventoryBatches as any[]).reduce(
+          const totalAvailable = activeBatches.reduce(
             (sum: number, b: any) => sum + b.quantity, 0
           );
           if (totalAvailable < item.quantity) {
@@ -779,7 +787,7 @@ export async function registerRoutes(
           }
 
           // Sort batches by entryDate ascending (oldest first = FIFO)
-          const sortedBatches = [...product.inventoryBatches].sort(
+          const sortedBatches = [...activeBatches].sort(
             (a: any, b: any) => new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime()
           );
 

@@ -143,7 +143,7 @@ export default function ProductDetail() {
   const similarScrollRef = useRef<HTMLDivElement>(null);
 
   const productId = params?.id;
-  const product = products?.find((p) => p.id === productId);
+  const product = products?.find((p) => p.id === productId && !p.batchExpired);
   const isUnavailable = product?.status === "unavailable";
 
   // Auto-redirect to home when the product disappears from the list (went out of stock
