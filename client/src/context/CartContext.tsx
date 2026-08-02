@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from "react";
 import type { Product, Coupon } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { useCustomer } from "@/context/CustomerContext";
+import { useProducts } from "@/hooks/use-products";
 
 export interface ComboInclude {
   productId: string;
@@ -116,6 +117,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const { toast } = useToast();
   const { customer, openLoginModal } = useCustomer();
+  const { data: liveProducts } = useProducts();
+  // Track IDs already notified so we only toast once per expiry event
+  const notifiedExpiredIds = useRef<Set<string>>(new Set());
 
   const addToCart = (product: Product | CartItem, quantity = 1, openCart = false) => {
     if (!customer) {
@@ -253,6 +257,53 @@ export function CartProvider({ children }: { children: ReactNode }) {
       setAppliedCoupon(null);
     }
   }, [items.length]);
+
+  // ── Auto-remove expired batch products from cart ──────────────────────────
+  useEffect(() => {
+    if (!liveProducts || items.length === 0) return;
+
+    // Build a map of productId → batchExpired flag
+    const expiredIds = new Set(
+      liveProducts
+        .filter((p) => p.batchExpired)
+        .map((p) => p.id)
+    );
+
+    // Find cart items that are now expired and haven't been notified yet
+    const toRemove = items.filter(
+      (item) => !item.isCombo && expiredIds.has(String(item.id))
+    );
+    const newlyExpired = toRemove.filter(
+      (item) => !notifiedExpiredIds.current.has(String(item.id))
+    );
+
+    if (newlyExpired.length === 0) return;
+
+    // Mark as notified
+    newlyExpired.forEach((item) => notifiedExpiredIds.current.add(String(item.id)));
+
+    // Remove from cart
+    setItems((current) =>
+      current.filter((item) => !expiredIds.has(String(item.id)))
+    );
+
+    // Toast listing removed product names
+    const names = newlyExpired.map((i) => i.name).join(", ");
+    toast({
+      title: "Items removed from your cart",
+      description: `${names} ${newlyExpired.length === 1 ? "is" : "are"} now out of stock and ${newlyExpired.length === 1 ? "has" : "have"} been removed.`,
+      variant: "destructive",
+      duration: 6000,
+    });
+  }, [liveProducts, items, toast]);
+
+  // When an item is later re-added to cart, clear its notified state so future
+  // expiry events are surfaced again
+  useEffect(() => {
+    items.forEach((item) => {
+      notifiedExpiredIds.current.delete(String(item.id));
+    });
+  }, [items]);
 
   return (
     <CartContext.Provider
