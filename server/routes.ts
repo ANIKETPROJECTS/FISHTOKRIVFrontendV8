@@ -226,21 +226,34 @@ export async function registerRoutes(
 
   // ── Inline mappers ──────────────────────────────────────────────────────
   const toProduct = (doc: any) => {
-    const allBatches = doc.inventoryBatches ?? [];
     const now = new Date();
-    const activeBatches = allBatches.filter((b: any) => {
+
+    // Internal inventory batches (managed by this app)
+    const allInvBatches: any[] = doc.inventoryBatches ?? [];
+    const activeInvBatches = allInvBatches.filter((b: any) => {
       if (b.remainingTime === "expired") return false;
       if (b.expiryDate && new Date(b.expiryDate) <= now) return false;
       return true;
     });
+
+    // External admin batches (stored in the `batches` field by the separate admin system)
+    const allExtBatches: any[] = doc.batches ?? [];
+    const activeExtBatches = allExtBatches.filter((b: any) => {
+      if (b.expiryDate && new Date(b.expiryDate) <= now) return false;
+      return true;
+    });
+
+    const hasAnyBatches = allInvBatches.length > 0 || allExtBatches.length > 0;
+    const hasActiveBatches = activeInvBatches.length > 0 || activeExtBatches.length > 0;
+
     // If product has batches and ALL are expired, mark as unavailable
-    const effectiveStatus = allBatches.length > 0 && activeBatches.length === 0
-      ? "unavailable"
-      : doc.status;
-    const batchExpired = allBatches.length > 0 && activeBatches.length === 0;
-    // Total available quantity — from non-expired batches if they exist, else fall back to doc.quantity
-    const availableQty = allBatches.length > 0
-      ? activeBatches.reduce((sum: number, b: any) => sum + (b.quantity ?? 0), 0)
+    const batchExpired = hasAnyBatches && !hasActiveBatches;
+    const effectiveStatus = batchExpired ? "unavailable" : doc.status;
+
+    // Available quantity: sum active batches from both systems; fall back to doc.quantity if no batches
+    const availableQty = hasAnyBatches
+      ? activeInvBatches.reduce((sum: number, b: any) => sum + (b.quantity ?? 0), 0)
+        + activeExtBatches.reduce((sum: number, b: any) => sum + (b.quantity ?? 0), 0)
       : (doc.quantity != null ? doc.quantity : null);
     return {
       id: doc._id.toString(), name: doc.name, category: doc.category,

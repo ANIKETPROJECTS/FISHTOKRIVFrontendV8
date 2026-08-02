@@ -56,15 +56,29 @@ export async function syncAllHubInventory() {
       }
 
       // Find products where every batch is expired → all-expired product IDs
+      // Check both inventoryBatches (managed by this app) and batches (external admin field)
       const allBatchedProducts = await Product.find({
-        "inventoryBatches.0": { $exists: true },
+        $or: [
+          { "inventoryBatches.0": { $exists: true } },
+          { "batches.0": { $exists: true } },
+        ],
       }).lean();
 
+      const now = new Date();
       const allExpiredProductIds = (allBatchedProducts as any[])
-        .filter((p: any) =>
-          (p.inventoryBatches ?? []).length > 0 &&
-          (p.inventoryBatches ?? []).every((b: any) => b.remainingTime === "expired")
-        )
+        .filter((p: any) => {
+          const invBatches: any[] = p.inventoryBatches ?? [];
+          const extBatches: any[] = p.batches ?? [];
+          const hasAny = invBatches.length > 0 || extBatches.length > 0;
+          if (!hasAny) return false;
+          const invAllExpired = invBatches.length === 0 || invBatches.every(
+            (b: any) => b.remainingTime === "expired" || (b.expiryDate && new Date(b.expiryDate) <= now)
+          );
+          const extAllExpired = extBatches.length === 0 || extBatches.every(
+            (b: any) => b.expiryDate && new Date(b.expiryDate) <= now
+          );
+          return invAllExpired && extAllExpired;
+        })
         .map((p: any) => p._id.toString());
 
       // Deactivate any active combo that contains at least one all-expired product
